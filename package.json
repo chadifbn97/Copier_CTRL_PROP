@@ -1,0 +1,29 @@
+{
+  "name": "heptapower-master-controller-server",
+  "version": "1.0.0",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "trading",
+    "mt5",
+    "heptapower",
+    "trade-copying"
+  ],
+  "author": "HeptaPower Trading Solutions",
+  "license": "ISC",
+  "description": "HeptaPower Master Controller - Real-time trade copying system for MT5",
+  "dependencies": {
+    "body-parser": "^2.2.0",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "express-session": "^1.18.0",
+    "mongoose": "^8.19.2",
+    "mqtt": "^5.14.1",
+    "speakeasy": "^2.0.0",
+    "winston": "^3.18.3"
+  }
+}

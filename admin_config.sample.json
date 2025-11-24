@@ -1,0 +1,26 @@
+{
+  "admin": {
+    "username": "admin",
+    "password": "CHANGE_THIS_PASSWORD",
+    "twoFactorSecret": "GENERATE_NEW_SECRET",
+    "id": "ADMIN001",
+    "require2FA": false
+  },
+  "security": {
+    "sessionSecret": "CHANGE_THIS_SESSION_SECRET_TO_RANDOM_STRING",
+    "maxLoginAttempts": 5,
+    "loginBlockTime": 300000
+  },
+  "server": {
+    "tcpPort": 4001,
+    "httpPort": 3000,
+    "sharedSecret": "MySecretKey123",
+    "maxHz": 2,
+    "offlineSec": 15
+  },
+  "database": {
+    "mongodbUri": "mongodb://localhost:27017/heptapower",
+    "useDatabase": false
+  }
+}
+
