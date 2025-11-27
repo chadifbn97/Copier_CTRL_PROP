@@ -567,7 +567,7 @@ function handleTradeActionMessage(msg, sock, controllers, broadcast) {
 
 /**
  * Handle bulk trade actions from Controller EA (multiple actions in ONE message)
- * More efficient than individual actions - prevents TCP flooding
+ * More efficient than individual actions - prevents TCP flooding .
  */
 function handleBulkTradeActionsMessage(msg, sock, controllers, broadcast) {
   const { id, userId, actions } = msg;
