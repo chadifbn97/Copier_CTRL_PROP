@@ -172,6 +172,9 @@ const tcp = net.createServer(sock => {
     else if (msg.type === 'broker_time') {
       TCPMessageHandler.handleBrokerTimeMessage(msg, sock, controllers, broadcast);
     }
+    else if (msg.type === 'trade_action') {
+      TCPMessageHandler.handleTradeActionMessage(msg, sock, controllers, broadcast);
+    }
   });
   
   sock.on('end', () => {

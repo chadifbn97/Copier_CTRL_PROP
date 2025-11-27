@@ -520,17 +520,6 @@ module.exports = function(accountData) {
     <!-- Controller Settings -->
     <div id="controllerSettings" style="display:none">
       <div style="margin-bottom:24px;padding:16px;background:var(--hover);border-radius:8px">
-        <h3 style="margin:0 0 16px 0;font-size:14px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid var(--primary);padding-bottom:8px">═════ Risk Management ═════</h3>
-        <div class="form-group">
-          <label>Risk in Percentage</label>
-          <div style="position:relative">
-            <input type="number" id="settingsRisk" step="0.01" min="0" placeholder="0.00" style="padding-right:35px" />
-            <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-weight:700">%</span>
-          </div>
-        </div>
-      </div>
-      
-      <div style="margin-bottom:24px;padding:16px;background:var(--hover);border-radius:8px">
         <h3 style="margin:0 0 16px 0;font-size:14px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid var(--accent);padding-bottom:8px">═════ Jitter & Offset Management ═════</h3>
         <div class="form-group">
           <label>Jitter in Seconds</label>
@@ -604,25 +593,42 @@ module.exports = function(accountData) {
     
     <!-- Prop Settings -->
     <div id="propSettings" style="display:none">
+      <!-- Risk Management Section (always visible) -->
       <div style="margin-bottom:24px;padding:16px;background:var(--hover);border-radius:8px">
-        <h3 style="margin:0 0 16px 0;font-size:14px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid var(--accent);padding-bottom:8px">═════ Risk/Reward Ratio ═════</h3>
+        <h3 style="margin:0 0 16px 0;font-size:14px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid var(--accent);padding-bottom:8px">═════ Risk Management ═════</h3>
+        
+        <!-- Calculation Method Dropdown (always visible) -->
         <div class="form-group">
-          <label>Method</label>
+          <label>Calculation Method</label>
+          <select id="settingsPropCalcMethod" style="width:100%;padding:12px 16px;border:2px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:16px;font-weight:600" onchange="onPropCalcMethodChange()">
+            <option value="none">No Calculation</option>
+            <option value="simple">Simple Risk</option>
+            <option value="rr">Risk/Reward Ratio</option>
+          </select>
+        </div>
+        
+        <!-- Risk Fields Container (shown/hidden based on Calculation Method) -->
+        <div id="propRiskFieldsContainer">
+          <div class="form-group" id="propRRMethodGroup">
+            <label id="propMethodLabel">RR Method</label>
           <select id="settingsPropMethod" style="width:100%;padding:12px 16px;border:2px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:16px;font-weight:600" onchange="updatePropValueIcon()">
             <option value="amount">Amount $</option>
             <option value="percentage">Percentage %</option>
           </select>
         </div>
-        <div class="form-group">
+          
+          <div class="form-group" id="propValueGroup">
           <label>Value</label>
           <div style="position:relative">
             <input type="number" id="settingsPropValue" step="0.01" min="0" placeholder="0.00" style="padding-right:40px" />
             <span id="propValueIcon" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-weight:700">$</span>
           </div>
         </div>
+          
         <!-- Warning about Risk/Reward -->
         <div id="riskWarningProp" style="margin-top:12px;padding:12px;background:#fff3cd;border:1px solid #ffc107;border-radius:6px;color:#856404;font-size:13px">
-          ⚠️ <strong>Important:</strong> If you set Risk/Reward settings here, this Prop EA won't use the Controller's Risk %. Also, <strong>TakeProfit is required</strong> for copying to work properly.
+            ⚠️ <strong>Important:</strong> If you set Risk/Reward settings here, TakeProfit is required for calculation to work properly.
+          </div>
         </div>
       </div>
       
@@ -1393,7 +1399,6 @@ function openSettings(type) {
   if(type === 'controller') {
     // If multiple EAs with different settings, show empty. If same, show common values
     const showSettings = ids.length === 1 || allSame ? firstSettings : null;
-    document.getElementById('settingsRisk').value = showSettings?.risk || '';
     document.getElementById('settingsJitter').value = showSettings?.jitter || '';
     document.getElementById('settingsOffset').value = showSettings?.offset || '';
     
@@ -1409,9 +1414,14 @@ function openSettings(type) {
   } else {
     // Prop settings
     const showSettings = ids.length === 1 || allSame ? firstSettings : null;
+    const calcMethod = showSettings?.calcMethod || 'none';
+    
+    document.getElementById('settingsPropCalcMethod').value = calcMethod;
     document.getElementById('settingsPropMethod').value = showSettings?.method || 'amount';
-    document.getElementById('settingsPropValue').value = showSettings?.value || '';
-    document.getElementById('settingsPropMaxTime').value = showSettings?.maxTime || '';
+    document.getElementById('settingsPropValue').value = showSettings?.value ?? '';
+    document.getElementById('settingsPropMaxTime').value = showSettings?.maxTime ?? '';
+    
+    onPropCalcMethodChange(); // Show/hide sections based on calculation method
     updatePropValueIcon(); // Update icon based on method
   }
   
@@ -1420,9 +1430,74 @@ function openSettings(type) {
 }
 
 function updatePropValueIcon() {
-  const method = document.getElementById('settingsPropMethod').value;
-  const icon = method === 'amount' ? '$' : '%';
-  document.getElementById('propValueIcon').textContent = icon;
+  const calcMethod = document.getElementById('settingsPropCalcMethod')?.value || 'none';
+  const iconElement = document.getElementById('propValueIcon');
+  if(!iconElement) return;
+  
+  if(calcMethod === 'simple') {
+    // Always percentage for Simple Risk
+    iconElement.textContent = '%';
+    return;
+  }
+  
+  if(calcMethod === 'rr') {
+    const method = document.getElementById('settingsPropMethod')?.value || 'amount';
+    iconElement.textContent = (method === 'amount') ? '$' : '%';
+    return;
+  }
+  
+  // 'none' or unknown: default to '$' but section is hidden anyway
+  iconElement.textContent = '$';
+}
+
+function onPropCalcMethodChange() {
+  const calcMethod = document.getElementById('settingsPropCalcMethod').value;
+  const fieldsContainer = document.getElementById('propRiskFieldsContainer');
+  const rrGroup = document.getElementById('propRRMethodGroup');
+  const valueGroup = document.getElementById('propValueGroup');
+  const methodSelect = document.getElementById('settingsPropMethod');
+  const valueInput = document.getElementById('settingsPropValue');
+  const icon = document.getElementById('propValueIcon');
+  
+  if(!fieldsContainer) return;
+  
+  if(calcMethod === 'none') {
+    // Hide only the fields container, not the entire section
+    fieldsContainer.style.display = 'none';
+    return;
+  }
+  
+  // Show fields container for 'simple' and 'rr'
+  fieldsContainer.style.display = 'block';
+  
+  if(calcMethod === 'simple') {
+    // Simple risk: percentage only, hide RR method
+    if(rrGroup) rrGroup.style.display = 'none';
+    if(valueGroup) valueGroup.style.display = 'block';
+    
+    // Force method to 'percentage' internally
+    if(methodSelect) methodSelect.value = 'percentage';
+    
+    // Icon always %
+    if(icon) icon.textContent = '%';
+    
+    if(valueInput) {
+      valueInput.step = '0.01';
+      valueInput.min = '0';
+    }
+  } else if(calcMethod === 'rr') {
+    // Risk/Reward Ratio: show RR method + value
+    if(rrGroup) rrGroup.style.display = 'block';
+    if(valueGroup) valueGroup.style.display = 'block';
+    
+    if(valueInput) {
+      valueInput.step = '0.01';
+      valueInput.min = '0';
+    }
+    
+    // Let updatePropValueIcon decide if $ or %
+    updatePropValueIcon();
+  }
 }
 
 function updateOffsetDirectionFields() {
@@ -1473,25 +1548,11 @@ async function saveSettings() {
   
   // Build settings based on EA type
   if(currentSettingsType === 'controller') {
-    const riskInput = document.getElementById('settingsRisk').value.trim();
     const jitterInput = document.getElementById('settingsJitter').value.trim();
     const offsetInput = document.getElementById('settingsOffset').value.trim();
     
     // For multi-EA: Always include all fields (empty = 0 to clear)
     // For single EA: Only include filled fields (partial update)
-    
-    if(riskInput !== '') {
-      const risk = parseFloat(riskInput);
-      if(isNaN(risk) || risk < 0) {
-        showNotification('❌ Invalid Risk Percentage', 'error');
-        return;
-      }
-      settingsData.risk = risk;
-      hasAtLeastOne = true;
-    } else if(isMultiEA) {
-      settingsData.risk = 0; // Clear for multi-EA
-      hasAtLeastOne = true;
-    }
     
     if(jitterInput !== '') {
       const jitter = parseFloat(jitterInput);
@@ -1537,25 +1598,52 @@ async function saveSettings() {
     }
   } else {
     // Prop settings
+    const calcMethod = document.getElementById('settingsPropCalcMethod').value;
     const method = document.getElementById('settingsPropMethod').value;
     const valueInput = document.getElementById('settingsPropValue').value.trim();
     const maxTimeInput = document.getElementById('settingsPropMaxTime').value.trim();
     
+    // Always store calcMethod
+    settingsData.calcMethod = calcMethod;
+    
+    if(calcMethod === 'none') {
+      // No risk calculation, only store calcMethod (and maxTime below if needed)
+      hasAtLeastOne = true;
+    } else if(calcMethod === 'simple') {
+      // Simple Risk: percentage value is required for single EA, optional (clear to 0) for multi-EA
     if(valueInput !== '') {
       const value = parseFloat(valueInput);
       if(isNaN(value) || value < 0) {
         showNotification('❌ Invalid Value', 'error');
         return;
       }
-      settingsData.method = method;
+        settingsData.method = 'percentage';
+        settingsData.value = value;
+        hasAtLeastOne = true;
+      } else if(isMultiEA) {
+        settingsData.method = 'percentage';
+        settingsData.value = 0; // Clear for multi-EA
+        hasAtLeastOne = true;
+      }
+    } else if(calcMethod === 'rr') {
+      // Risk/Reward Ratio: method + value
+      if(valueInput !== '') {
+        const value = parseFloat(valueInput);
+        if(isNaN(value) || value < 0) {
+          showNotification('❌ Invalid Value', 'error');
+          return;
+        }
+        settingsData.method = method;  // 'amount' or 'percentage'
       settingsData.value = value;
       hasAtLeastOne = true;
     } else if(isMultiEA) {
       settingsData.method = method;
       settingsData.value = 0; // Clear for multi-EA
       hasAtLeastOne = true;
+      }
     }
     
+    // Handle maxTime (independent of calcMethod)
     if(maxTimeInput !== '') {
       const maxTime = parseFloat(maxTimeInput);
       if(isNaN(maxTime) || maxTime < 0) {

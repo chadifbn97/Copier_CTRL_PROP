@@ -412,6 +412,94 @@ function handleBrokerTimeMessage(msg, sock, controllers, broadcast) {
   }
 }
 
+/**
+ * Handle 'trade_action' message from Controller EA
+ * Routes close/modify/remove actions to all Prop EAs
+ */
+function handleTradeActionMessage(msg, sock, controllers, broadcast) {
+  const { id, userId, action, controllerTicket } = msg;
+  
+  if(!id || !userId || !action || !controllerTicket) {
+    console.log('[TCP] ⚠️ Invalid trade_action message - missing required fields');
+    return;
+  }
+  
+  // Find the Controller EA
+  const found = EAManager.findEABySocket(controllers, sock);
+  if(!found || found.ea.role !== 'controller') {
+    console.log(`[TCP] ⚠️ trade_action from non-controller EA: ${id}`);
+    return;
+  }
+  
+  const ctrl = found.ea;
+  
+  // Log the action
+  console.log(`[TRADE-ACTION] 📬 ${action} from ${id} - Ticket: ${controllerTicket}`);
+  
+  // Get all Prop EAs for this user
+  const propEAs = EAManager.getEAsByType(controllers, 'prop')
+    .filter(p => p.ea.userId === userId && p.ea.connected);
+  
+  if(propEAs.length === 0) {
+    console.log(`[TRADE-ACTION] ⚠️ No Prop EAs for user ${userId}`);
+    return;
+  }
+  
+  // Forward action to all Prop EAs
+  console.log(`[TRADE-ACTION] ➡️ Forwarding ${action} to ${propEAs.length} Prop EA(s)`);
+  
+  for(const propObj of propEAs) {
+    const prop = propObj.ea;
+    
+    if(!prop.socket) {
+      console.log(`[TRADE-ACTION] ⚠️ Prop EA ${prop.id} has no socket`);
+      continue;
+    }
+    
+    // Build trade_request message based on action type
+    let request = null;
+    
+    if(action === 'close_position') {
+      request = TradeRequestManager.buildExitPositionRequest(
+        controllerTicket,
+        msg.volume || 0  // 0 = close all
+      );
+    } else if(action === 'modify_position') {
+      request = TradeRequestManager.buildModifyPositionRequest(
+        controllerTicket,
+        msg.sl || 0,
+        msg.tp || 0
+      );
+    } else if(action === 'remove_order') {
+      request = TradeRequestManager.buildExitOrderRequest(
+        controllerTicket
+      );
+    } else if(action === 'modify_order') {
+      request = TradeRequestManager.buildModifyOrderRequest(
+        controllerTicket,
+        msg.openPrice || 0,
+        msg.volume || 0,
+        msg.sl || 0,
+        msg.tp || 0
+      );
+    } else {
+      console.log(`[TRADE-ACTION] ⚠️ Unknown action type: ${action}`);
+      continue;
+    }
+    
+    if(request) {
+      // Send request to Prop EA (pass entire prop object)
+      TradeRequestManager.sendTradeRequest(prop, request, (success, response) => {
+        if(success) {
+          console.log(`[TRADE-ACTION] ✅ ${action} completed on ${prop.id} - Controller Ticket: ${controllerTicket}, Result: ${JSON.stringify(response)}`);
+        } else {
+          console.log(`[TRADE-ACTION] ❌ ${action} failed on ${prop.id}: ${response?.error || 'Unknown error'}`);
+        }
+      });
+    }
+  }
+}
+
 module.exports = {
   handleHelloMessage,
   handleStatusMessage,
@@ -422,6 +510,7 @@ module.exports = {
   handleTradesLiveMessage,
   handleTradesHistoryMessage,
   handleTradeResponseMessage,
-  handleBrokerTimeMessage
+  handleBrokerTimeMessage,
+  handleTradeActionMessage
 };
 

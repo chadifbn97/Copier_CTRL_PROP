@@ -104,8 +104,9 @@ function buildExitPositionRequest(ticket, volume) {
     type: 'trade_request',
     subtype: 'Request_Exit.Pos',
     requestId: requestId,
+    controllerTicket: ticket,  // ← ADD THIS! (in root for Prop EA to find)
     data: {
-      ticket: ticket,   // int
+      ticket: ticket,   // int (keep for backward compatibility)
       volume: volume    // double (0 = close all)
     },
     timestamp: Date.now()
@@ -126,8 +127,9 @@ function buildExitOrderRequest(ticket) {
     type: 'trade_request',
     subtype: 'Request_Exit.Ord',
     requestId: requestId,
+    controllerTicket: ticket,  // ← ADD THIS! (in root for Prop EA to find)
     data: {
-      ticket: ticket    // int
+      ticket: ticket    // int (keep for backward compatibility)
     },
     timestamp: Date.now()
   };
@@ -149,8 +151,9 @@ function buildModifyPositionRequest(ticket, sl, tp) {
     type: 'trade_request',
     subtype: 'Request_Modify.Pos',
     requestId: requestId,
+    controllerTicket: ticket,  // ← ADD THIS! (in root for Prop EA to find)
     data: {
-      ticket: ticket,   // int
+      ticket: ticket,   // int (keep for backward compatibility)
       sl: sl,           // double (0 = no change)
       tp: tp            // double (0 = no change)
     },
@@ -176,8 +179,9 @@ function buildModifyOrderRequest(ticket, openPrice, volume, sl, tp) {
     type: 'trade_request',
     subtype: 'Request_Modify.Ord',
     requestId: requestId,
+    controllerTicket: ticket,  // ← ADD THIS! (in root for Prop EA to find)
     data: {
-      ticket: ticket,       // int
+      ticket: ticket,       // int (keep for backward compatibility)
       openPrice: openPrice, // double (0 = no change)
       volume: volume,       // double (0 = no change)
       sl: sl,               // double (0 = no change)
