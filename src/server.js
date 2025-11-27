@@ -129,7 +129,18 @@ const tcp = net.createServer(sock => {
     }
     
     // Check rate limit (but exempt critical message types)
-    const exemptFromRateLimit = ['hello', 'deinit', 'account_info', 'trades_live', 'trades_history', 'trade_response'];
+    const exemptFromRateLimit = [
+      'hello', 
+      'deinit', 
+      'account_info', 
+      'trades_live', 
+      'trades_history', 
+      'trade_response',
+      'trade_action',           // Single trade action (critical for reliability)
+      'trade_actions_bulk',     // Bulk trade actions (critical for performance)
+      'status',                 // Heartbeat/connection health
+      'tick'                    // Price sync
+    ];
     if (msg.id && !exemptFromRateLimit.includes(msg.type)) {
       const rateCheck = Security.checkRateLimit(msg.id, RATE_MAX_HZ_PER_EA, RATE_WINDOW_MS);
       if (!rateCheck.ok) {
