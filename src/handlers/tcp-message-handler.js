@@ -647,15 +647,20 @@ function handleBulkTradeActionsMessage(msg, sock, controllers, broadcast) {
   });
   
   // Get all Prop EAs for this user
-  const allUserEAs = EAManager.getEAsByUser(controllers, userId);
-  console.log(`[BULK-ACTIONS] 🔍 Found ${allUserEAs.length} total EA(s) for user ${userId}`);
+  // Note: getEAsByUser returns [{key, ea}, ...] format
+  const allUserEAsWithKeys = EAManager.getEAsByUser(controllers, userId);
+  console.log(`[BULK-ACTIONS] 🔍 Found ${allUserEAsWithKeys.length} total EA(s) for user ${userId}`);
   
   // Debug: Print EA details
-  allUserEAs.forEach(ea => {
-    console.log(`[BULK-ACTIONS] 🔍 EA: ${ea.id} | Role: "${ea.role}" | Type: ${typeof ea.role}`);
+  allUserEAsWithKeys.forEach(item => {
+    console.log(`[BULK-ACTIONS] 🔍 EA: ${item.ea.id} | Role: "${item.ea.role}" | Type: ${typeof item.ea.role}`);
   });
   
-  const propEAs = allUserEAs.filter(ea => ea.role === 'prop');
+  // Extract EA objects and filter by role
+  const propEAs = allUserEAsWithKeys
+    .map(item => item.ea)
+    .filter(ea => ea.role === 'prop');
+  
   console.log(`[BULK-ACTIONS] 🔍 Filtered to ${propEAs.length} Prop EA(s)`);
   
   if(propEAs.length === 0) {
