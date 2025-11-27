@@ -102,16 +102,30 @@ function isDuplicateEA(controllers, userId, type, eaId, currentSocket) {
   const key = makeKey(userId, type, eaId);
   const existing = controllers.get(key);
   
-  if(!existing) return false;
+  if(!existing) {
+    console.log(`[DUPLICATE-CHECK] ${eaId}: No existing EA → Not duplicate`);
+    return false;
+  }
   
-  // If same socket, not duplicate (reconnect scenario)
-  if(existing.socket === currentSocket) return false;
+  // If same socket object, not duplicate (reconnect scenario)
+  if(existing.socket === currentSocket) {
+    console.log(`[DUPLICATE-CHECK] ${eaId}: Same socket object → Not duplicate (reconnection)`);
+    return false;
+  }
   
-  // If exists with different socket and online, it's duplicate
-  if(existing.state === 'online' || existing.userValidated) {
+  // Different socket - check if old socket is still alive
+  const socketAlive = existing.socket && !existing.socket.destroyed && existing.socket.writable;
+  
+  if(socketAlive) {
+    // Old socket is still alive and it's a DIFFERENT socket → DUPLICATE!
+    console.log(`[DUPLICATE-CHECK] ❌ ${eaId}: Different socket & old socket alive → DUPLICATE DETECTED!`);
+    console.log(`[DUPLICATE-CHECK]    Old socket: ${existing.socket.remoteAddress} (destroyed=${existing.socket.destroyed}, writable=${existing.socket.writable})`);
+    console.log(`[DUPLICATE-CHECK]    New socket: ${currentSocket.remoteAddress}`);
     return true;
   }
   
+  // Old socket is dead, allow new connection to take over
+  console.log(`[DUPLICATE-CHECK] ${eaId}: Old socket dead (destroyed=${existing.socket?.destroyed}, writable=${existing.socket?.writable}) → Allow new connection`);
   return false;
 }
 

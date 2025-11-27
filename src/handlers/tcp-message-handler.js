@@ -3,6 +3,7 @@
 
 const EAManager = require('../managers/ea-manager');
 const TradeRequestManager = require('../managers/trade-request-manager');
+const TradeActionLog = require('../models/TradeActionLog');
 
 /**
  * Handle 'hello' message from EA
@@ -23,18 +24,14 @@ async function handleHelloMessage(msg, sock, controllers, adminAccounts, isMongo
     existing.userValidated = false;
   }
   
-  // Reserve EA slot immediately (before async validation)
+  // Reserve EA slot ONLY if new (don't update socket yet - duplicate check first!)
   // This prevents race condition where 2 EAs with same ID both pass duplicate check
   if(!controllers.has(key)) {
     const eaData = EAManager.createEAData(userId || '', role, id, sock);
     controllers.set(key, eaData);
+    console.log(`[TCP] ${id} reserved slot [key: ${key}]`);
   } else {
-    // EA exists - update socket (reconnect scenario)
-    const existing = controllers.get(key);
-    existing.socket = sock;
-    existing.lastSeen = Date.now();
-    existing.connected = true;
-    console.log(`[TCP] ${id} reconnected - updated socket [key: ${key}]`);
+    console.log(`[TCP] ${id} attempting reconnection [key: ${key}] - will validate before updating socket`);
   }
   
   if(userId) {
@@ -136,6 +133,9 @@ async function handleHelloMessage(msg, sock, controllers, adminAccounts, isMongo
       // Mark as validated ✅
       const cur = controllers.get(key);
       if(cur) {
+        // NOW it's safe to update socket (all validations passed!)
+        cur.socket = sock;
+        cur.lastSeen = Date.now();
         cur.userValidated = true;
         cur.state = 'online';
         cur.accountNumber = accountNumber || '';
@@ -436,6 +436,43 @@ function handleTradeActionMessage(msg, sock, controllers, broadcast) {
   // Log the action
   console.log(`[TRADE-ACTION] 📬 ${action} from ${id} - Ticket: ${controllerTicket}`);
   
+  // Send immediate ACK to Controller EA
+  const ackMsg = {
+    type: 'trade_action_ack',
+    controllerTicket: controllerTicket,
+    action: action,
+    timestamp: Date.now()
+  };
+  
+  const ackJSON = JSON.stringify(ackMsg);
+  const ackBuffer = Buffer.from(ackJSON, 'utf8');
+  const ackFrame = Buffer.allocUnsafe(4 + ackBuffer.length);
+  ackFrame.writeUInt32BE(ackBuffer.length, 0);
+  ackBuffer.copy(ackFrame, 4);
+  
+  sock.write(ackFrame);
+  console.log(`[ACK] ✅ Sent to ${id} for ticket ${controllerTicket}`);
+  
+  // Log to MongoDB (Fire-and-forget - non-blocking)
+  const logEntry = new TradeActionLog({
+    userId: msg.userId,
+    controllerEAId: id,
+    controllerTicket: controllerTicket,
+    action: action,
+    sl: msg.sl || 0,
+    tp: msg.tp || 0,
+    volume: msg.volume || 0,
+    openPrice: msg.openPrice || 0,
+    serverReceivedAt: new Date(),
+    success: null  // Will be updated when Prop responds
+  });
+  
+  logEntry.save().then(() => {
+    console.log(`[DB] 💾 Trade action logged: ${action} ticket ${controllerTicket}`);
+  }).catch(err => {
+    console.error(`[DB] ❌ Failed to log trade action:`, err.message);
+  });
+  
   // Get all Prop EAs for this user
   const propEAs = EAManager.getEAsByType(controllers, 'prop')
     .filter(p => p.ea.userId === userId && p.ea.connected);
@@ -492,8 +529,36 @@ function handleTradeActionMessage(msg, sock, controllers, broadcast) {
       TradeRequestManager.sendTradeRequest(prop, request, (success, response) => {
         if(success) {
           console.log(`[TRADE-ACTION] ✅ ${action} completed on ${prop.id} - Controller Ticket: ${controllerTicket}, Result: ${JSON.stringify(response)}`);
+          
+          // Update MongoDB log with success
+          TradeActionLog.findOneAndUpdate(
+            { controllerTicket: controllerTicket, action: action },
+            { 
+              propEAId: prop.id,
+              propTicket: response.ticket || '',
+              success: true,
+              propExecutedAt: new Date()
+            },
+            { sort: { timestamp: -1 } }  // Get the most recent matching entry
+          ).catch(err => {
+            console.error(`[DB] ❌ Failed to update trade action log:`, err.message);
+          });
         } else {
           console.log(`[TRADE-ACTION] ❌ ${action} failed on ${prop.id}: ${response?.error || 'Unknown error'}`);
+          
+          // Update MongoDB log with failure
+          TradeActionLog.findOneAndUpdate(
+            { controllerTicket: controllerTicket, action: action },
+            { 
+              propEAId: prop.id,
+              success: false,
+              error: response?.error || 'Unknown error',
+              propExecutedAt: new Date()
+            },
+            { sort: { timestamp: -1 } }
+          ).catch(err => {
+            console.error(`[DB] ❌ Failed to update trade action log:`, err.message);
+          });
         }
       });
     }
