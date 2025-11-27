@@ -3,6 +3,14 @@
 
 const EAManager = require('./ea-manager');
 const TradeRequestManager = require('./trade-request-manager');
+const ActivityLog = require('../models/ActivityLog');
+
+// Broadcast function (will be set by server)
+let broadcastFn = null;
+
+function setBroadcastFunction(fn) {
+  broadcastFn = fn;
+}
 
 // Throttled skip logging (once per 15s per trade→prop)
 const lastSkipLogAt = new Map(); // key: `${userId}|${controllerEAId}:${controllerTicket}|${propEAId}` -> timestamp
@@ -258,6 +266,25 @@ function copyPositionToPropEAs(controllerEA, position, propEAs) {
     TradeRequestManager.sendTradeRequest(propEA, request, (success, response) => {
       if(success) {
         updateCopyStatus(userId, controllerEAId, controllerTicket, propEAId, 'success', response.ticket, null, requestId);
+        
+        // Log successful copy to Activity Log
+        const activityLog = new ActivityLog({
+          userId: userId,
+          type: 'trade_copied',
+          controllerEAId: controllerEAId,
+          controllerAccount: controllerEA.accountNumber || 'N/A',
+          controllerTicket: controllerTicket.toString(),
+          propEAId: propEAId,
+          propAccount: propEA.accountNumber || 'N/A',
+          propTicket: response.ticket.toString(),
+          action: 'entry',
+          success: true
+        });
+        activityLog.save()
+          .then(log => {
+            if(broadcastFn) broadcastFn({ type: 'activity_log', data: log.toObject() });
+          })
+          .catch(err => console.error('[ActivityLog] Error:', err));
       } else {
         updateCopyStatus(userId, controllerEAId, controllerTicket, propEAId, 'failed', null, response.error, requestId);
       }
@@ -318,6 +345,25 @@ function copyOrderToPropEAs(controllerEA, order, propEAs) {
         console.log(`[TRADE-COPY] ✅ Successfully copied order to ${propEAId} - Prop Ticket: ${response.ticket}`);
         console.log(`[TRACK-UPDATE] Setting SUCCESS: ${controllerEAId}:${controllerTicket} → ${propEAId} (ticket: ${response.ticket}, requestId: ${requestId})`);
         updateCopyStatus(userId, controllerEAId, controllerTicket, propEAId, 'success', response.ticket, null, requestId);
+        
+        // Log successful copy to Activity Log
+        const activityLog = new ActivityLog({
+          userId: userId,
+          type: 'trade_copied',
+          controllerEAId: controllerEAId,
+          controllerAccount: controllerEA.accountNumber || 'N/A',
+          controllerTicket: controllerTicket.toString(),
+          propEAId: propEAId,
+          propAccount: propEA.accountNumber || 'N/A',
+          propTicket: response.ticket.toString(),
+          action: 'entry',
+          success: true
+        });
+        activityLog.save()
+          .then(log => {
+            if(broadcastFn) broadcastFn({ type: 'activity_log', data: log.toObject() });
+          })
+          .catch(err => console.error('[ActivityLog] Error:', err));
       } else {
         console.error(`[TRADE-COPY] ❌ Failed to copy order to ${propEAId}: ${response.error} (code: ${response.errorCode})`);
         console.log(`[TRACK-UPDATE] Setting FAILED: ${controllerEAId}:${controllerTicket} → ${propEAId} (error: ${response.error}, requestId: ${requestId})`);
@@ -486,6 +532,7 @@ module.exports = {
   getTrackingStats,
   getTrackedTrades,
   getAllTradeHistory,
-  getCopyStatusDisplay
+  getCopyStatusDisplay,
+  setBroadcastFunction
 };
 

@@ -4,6 +4,7 @@
 const EAManager = require('../managers/ea-manager');
 const TradeRequestManager = require('../managers/trade-request-manager');
 const TradeActionLog = require('../models/TradeActionLog');
+const ActivityLog = require('../models/ActivityLog');
 
 /**
  * Handle 'hello' message from EA
@@ -151,6 +152,21 @@ async function handleHelloMessage(msg, sock, controllers, adminAccounts, isMongo
         EAManager.logEAAction('VALIDATED', userId, role, id, `key=${key}`);
         console.log(`[TCP] ${id} connected (userId: ${userId}) [key: ${key}]`);
         
+        // Log EA connection to Activity Log
+        const activityLog = new ActivityLog({
+          userId: userId,
+          type: 'ea_connected',
+          eaType: role,
+          eaId: id,
+          accountNumber: msg.accountNumber || 'N/A'
+        });
+        activityLog.save()
+          .then(log => {
+            // Broadcast to dashboard via SSE
+            broadcast({ type: 'activity_log', data: log.toObject() });
+          })
+          .catch(err => console.error('[ActivityLog] Error:', err));
+        
         // ⚡ Optimize TCP for fast, low-latency trade copying
         sock.setNoDelay(true);  // Disable Nagle's algorithm - send immediately!
         
@@ -255,6 +271,21 @@ function handleDeinitMessage(msg, sock, controllers, broadcast) {
       type: 'deinit_confirmed', 
       data: { id, reason, reasonText, wasRemoveCommand, timestamp: Date.now() } 
     });
+    
+    // Log EA disconnection to Activity Log
+    const activityLog = new ActivityLog({
+      userId: cur.userId,
+      type: 'ea_disconnected',
+      eaType: cur.role,
+      eaId: id,
+      accountNumber: cur.accountNumber || 'N/A'
+    });
+    activityLog.save()
+      .then(log => {
+        // Broadcast to dashboard via SSE
+        broadcast({ type: 'activity_log', data: log.toObject() });
+      })
+      .catch(err => console.error('[ActivityLog] Error:', err));
     
     // Delete EA using EA Manager based on reason
     if(reason === 1) {
@@ -530,6 +561,28 @@ function handleTradeActionMessage(msg, sock, controllers, broadcast) {
         if(success) {
           console.log(`[TRADE-ACTION] ✅ ${action} completed on ${prop.id} - Controller Ticket: ${controllerTicket}, Result: ${JSON.stringify(response)}`);
           
+          // Log to Activity Log
+          const activityAction = (action.includes('close') || action.includes('remove')) ? 'exit' : 
+                                 action.includes('modify') ? 'modify' : 'entry';
+          
+          const activityLog = new ActivityLog({
+            userId: userId,
+            type: 'trade_copied',
+            controllerEAId: id,
+            controllerAccount: ctrl.accountNumber || 'N/A',
+            controllerTicket: controllerTicket.toString(),
+            propEAId: prop.id,
+            propAccount: prop.accountNumber || 'N/A',
+            propTicket: (response.ticket || '').toString(),
+            action: activityAction,
+            success: true
+          });
+          activityLog.save()
+            .then(log => {
+              if(broadcast) broadcast({ type: 'activity_log', data: log.toObject() });
+            })
+            .catch(err => console.error('[ActivityLog] Error:', err));
+          
           // Update MongoDB log with success
           TradeActionLog.findOneAndUpdate(
             { controllerTicket: controllerTicket, action: action },
@@ -702,6 +755,28 @@ function handleBulkTradeActionsMessage(msg, sock, controllers, broadcast) {
         TradeRequestManager.sendTradeRequest(prop, request, (success, response) => {
           if(success) {
             console.log(`[BULK-ACTIONS] ✅ ${actionType} completed on ${prop.id} - Ticket: ${controllerTicket}`);
+            
+            // Log to Activity Log (map action types)
+            const activityAction = (actionType.includes('close') || actionType.includes('remove')) ? 'exit' : 
+                                   actionType.includes('modify') ? 'modify' : 'entry';
+            
+            const activityLog = new ActivityLog({
+              userId: userId,
+              type: 'trade_copied',
+              controllerEAId: id,
+              controllerAccount: ctrl.accountNumber || 'N/A',
+              controllerTicket: controllerTicket.toString(),
+              propEAId: prop.id,
+              propAccount: prop.accountNumber || 'N/A',
+              propTicket: (response?.ticket || '').toString(),
+              action: activityAction,
+              success: true
+            });
+            activityLog.save()
+              .then(log => {
+                if(broadcast) broadcast({ type: 'activity_log', data: log.toObject() });
+              })
+              .catch(err => console.error('[ActivityLog] Error:', err));
           } else {
             console.log(`[BULK-ACTIONS] ❌ ${actionType} failed on ${prop.id}: ${response?.error || 'Unknown'}`);
           }

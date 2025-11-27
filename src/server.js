@@ -95,6 +95,9 @@ const copyService = new CopyService(controllers);
 copyService.start();
 console.log('✅ Copy Service started - independent from TCP handlers');
 
+// Set broadcast function for Trade Copy Manager (for activity logging)
+TradeCopyManager.setBroadcastFunction(broadcast);
+
 // ========== ADMIN ACCOUNTS ==========
 const adminAccounts = new Map(); // username -> {username, password, id, createdAt, active}
 const loginAttempts = new Map(); // ip -> {attempts, lastAttempt, blockedUntil}
@@ -386,10 +389,62 @@ app.post('/api/ea-settings', async (req,res)=>{
     Object.assign(cur.settings, settings);
     
     console.log(`[SETTINGS] Saved for EA ${id} (${type}):`, mergedSettings);
+    
+    // Log settings update to Activity Log
+    const ActivityLog = require('./models/ActivityLog');
+    const activityLog = new ActivityLog({
+      userId: userId,
+      type: 'settings_updated',
+      eaType: type,
+      eaId: id,
+      accountNumber: cur.accountNumber || 'N/A',
+      settings: mergedSettings
+    });
+    activityLog.save()
+      .then(log => {
+        // Broadcast to dashboard via SSE
+        broadcast({ type: 'activity_log', data: log.toObject() });
+      })
+      .catch(err => console.error('[ActivityLog] Error:', err));
+    
     res.json({ ok:true, id, settings: mergedSettings });
   } catch(err) {
     console.error('[ERROR] Failed to save EA settings:', err);
     res.json({ ok:false, error: 'Database error' });
+  }
+});
+
+// Fetch activity logs for a user
+app.get('/api/activity-logs', async (req, res) => {
+  const userId = req.query.userId;
+  if(!userId) return res.json({ ok: false, error: 'Missing userId' });
+  
+  try {
+    const ActivityLog = require('./models/ActivityLog');
+    const logs = await ActivityLog.find({ userId: userId })
+      .sort({ timestamp: -1 })
+      .limit(100)
+      .lean();
+    
+    res.json({ ok: true, logs });
+  } catch(err) {
+    console.error('[ERROR] Failed to fetch activity logs:', err);
+    res.json({ ok: false, error: 'Database error' });
+  }
+});
+
+// Clear activity logs for a user (frontend only, keeps in DB)
+app.post('/api/activity-logs/clear', async (req, res) => {
+  const userId = req.body.userId;
+  if(!userId) return res.json({ ok: false, error: 'Missing userId' });
+  
+  try {
+    // Just return success - frontend will filter out old logs
+    // Server keeps all logs for audit trail
+    res.json({ ok: true, clearTimestamp: Date.now() });
+  } catch(err) {
+    console.error('[ERROR] Failed to clear activity logs:', err);
+    res.json({ ok: false, error: 'Error' });
   }
 });
 

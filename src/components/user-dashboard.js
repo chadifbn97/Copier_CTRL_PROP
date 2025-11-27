@@ -694,6 +694,11 @@ function showTab(tab) {
   const tabs = document.querySelector('.tabs');
   if(tabs) tabs.classList.remove('tabs-hidden');
   
+  // Load activity logs when History tab is shown
+  if(tab === 'history') {
+    loadHistoryLogs();
+  }
+  
   // Show account info panel for controller/props tabs (not overview)
   const activeTabElement = document.getElementById(tab);
   const accountInfoPanel = activeTabElement ? activeTabElement.querySelector('.account-info-panel') : null;
@@ -938,6 +943,27 @@ sse.onmessage = (e) => {
       
       // Only update history tables (Deals & Deleted Orders)
       filterAndDisplayHistoryTrades();
+    }
+  }
+  
+  if(msg.type === 'activity_log') {
+    // New activity log received via SSE
+    const log = msg.data;
+    
+    // Add to beginning of all logs
+    allHistoryLogs.unshift(log);
+    
+    // Check if it should be visible (after clear timestamp and matches filter)
+    const logTime = new Date(log.timestamp).getTime();
+    
+    if(logTime > userClearTimestamp) {
+      const searchBox = document.getElementById('historySearchBox');
+      const query = searchBox ? searchBox.value.trim().toLowerCase() : '';
+      
+      if(query === '' || matchesSearchQuery(log, query)) {
+        filteredHistoryLogs.unshift(log);
+        renderHistoryLogs();
+      }
     }
   }
   
@@ -2104,7 +2130,7 @@ function filterControllerLiveTrades() {
   const ordStats = calculateStats(orders, 'order');
   const posPL = calculatePL(positions);
   
-  renderControllerLiveTrades({ positions, orders, posStats, ordStats, posPL });
+  renderControllerLiveTrades({ id: selectedEA, positions, orders, posStats, ordStats, posPL });
 }
 
 // Only filter and render HISTORY trades (Deals & Deleted Orders)
@@ -2162,7 +2188,7 @@ function filterPropLiveTrades() {
   const ordStats = calculateStats(orders, 'order');
   const posPL = calculatePL(positions);
   
-  renderPropLiveTrades({ positions, orders, posStats, ordStats, posPL });
+  renderPropLiveTrades({ id: selectedEA, positions, orders, posStats, ordStats, posPL });
 }
 
 // Only filter and render HISTORY trades for Props
@@ -2634,18 +2660,25 @@ function renderPropTrades(data, liveOnly = false, historyOnly = false) {
 let allHistoryLogs = []; // Store all logs
 let filteredHistoryLogs = []; // Store filtered logs
 
-// Load history logs from server (Trade Copy History)
+// Load clear timestamp from localStorage (per user)
+const userId = '${accountData.accountId}';
+const clearTimestampKey = 'historyLogClearTime_' + userId;
+let userClearTimestamp = parseInt(localStorage.getItem(clearTimestampKey) || '0', 10);
+
+// Load activity logs from server
 async function loadHistoryLogs() {
   try {
-    const userId = '${accountData.userId}'; // Use the logged-in user's ID
-    const res = await fetch('/api/trade-history?userId=' + userId);
-    if(!res.ok) throw new Error('Failed to load history');
+    const res = await fetch('/api/activity-logs?userId=' + userId);
+    if(!res.ok) throw new Error('Failed to load logs');
     
     const data = await res.json();
     if(!data.ok) throw new Error(data.error || 'Unknown error');
     
-    allHistoryLogs = data.history || [];
-    filteredHistoryLogs = [...allHistoryLogs];
+    allHistoryLogs = data.logs || [];
+    
+    // Filter out logs before user's clear timestamp
+    filteredHistoryLogs = allHistoryLogs.filter(log => new Date(log.timestamp).getTime() > userClearTimestamp);
+    
     renderHistoryLogs();
   } catch(err) {
     console.error('[HISTORY] Failed to load logs:', err);
@@ -2653,32 +2686,63 @@ async function loadHistoryLogs() {
   }
 }
 
-// Render history logs to the container (Trade Copy History)
+// Render activity logs to the container
 function renderHistoryLogs() {
   const container = document.getElementById('historyLogsContainer');
   if(!container) return;
   
   if(filteredHistoryLogs.length === 0) {
-    container.innerHTML = '<div style="color:var(--text-muted);text-align:center;padding:40px">No trade history available. Logs will appear here once trades are copied.</div>';
+    container.innerHTML = '<div style="color:var(--text-muted);text-align:center;padding:40px">No logs available. Logs will appear here once EA activities are recorded.</div>';
     return;
   }
   
-  // Render logs in format: CTRL-001 #1314785284 ---> PROP-001 #55351124 | Buy
+  // Render logs based on activity type
   container.innerHTML = filteredHistoryLogs.map(log => {
     const timestamp = new Date(log.timestamp).toLocaleString();
-    const statusIcon = log.status === 'success' ? '✅' : log.status === 'failed' ? '❌' : '⏳';
-    const statusColor = log.status === 'success' ? 'var(--success)' : log.status === 'failed' ? 'var(--error)' : 'var(--warning)';
-    const propTicketDisplay = log.propTicket ? \`#\${log.propTicket}\` : '(pending)';
-    const errorDisplay = log.error ? \` - Error: \${escapeHtml(log.error)}\` : '';
+    let icon, logText, color;
     
-    // Format: CTRL-001 #1314785284 ---> PROP-001 #10009712 | Buy
-    const logText = \`\${log.controllerEAId} #\${log.controllerTicket} ---> \${log.propEAId} \${propTicketDisplay} | \${log.type}\${errorDisplay}\`;
+    switch(log.type) {
+      case 'ea_connected':
+        icon = '🟢';
+        color = 'var(--success)';
+        logText = \`EA Connected: \${log.eaType.toUpperCase()} \${log.eaId} (Acc: \${log.accountNumber})\`;
+        break;
+        
+      case 'ea_disconnected':
+        icon = '🔴';
+        color = 'var(--error)';
+        logText = \`EA Disconnected: \${log.eaType.toUpperCase()} \${log.eaId} (Acc: \${log.accountNumber})\`;
+        break;
+        
+      case 'settings_updated':
+        icon = '⚙️';
+        color = 'var(--warning)';
+        logText = \`Settings Updated: \${log.eaType.toUpperCase()} \${log.eaId}\`;
+        break;
+        
+      case 'warning':
+        icon = '⚠️';
+        color = 'var(--warning)';
+        logText = \`Warning: \${log.warningMessage || 'Unknown'}\`;
+        break;
+        
+      case 'trade_copied':
+        icon = log.success ? '✅' : '❌';
+        color = log.success ? 'var(--success)' : 'var(--error)';
+        const action = (log.action || 'entry').toUpperCase();
+        logText = \`[\${action}] \${log.controllerEAId} (Acc: \${log.controllerAccount}) #\${log.controllerTicket} → \${log.propEAId} (Acc: \${log.propAccount}) #\${log.propTicket}\`;
+        break;
+        
+      default:
+        icon = '📋';
+        color = 'var(--text)';
+        logText = \`Activity: \${log.type}\`;
+    }
     
     return '<div style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;gap:12px;align-items:center">' +
            '<span style="color:var(--text-muted);font-size:11px;min-width:140px">' + timestamp + '</span>' +
-           '<span style="font-size:14px">' + statusIcon + '</span>' +
-           '<span style="color:var(--text);font-family:monospace;font-size:12px;flex:1">' + logText + '</span>' +
-           (log.attempts > 1 ? '<span style="color:var(--warning);font-size:11px">Attempts: ' + log.attempts + '</span>' : '') +
+           '<span style="font-size:14px">' + icon + '</span>' +
+           '<span style="color:' + color + ';font-family:monospace;font-size:12px;flex:1">' + logText + '</span>' +
            '</div>';
   }).join('');
   
@@ -2686,7 +2750,30 @@ function renderHistoryLogs() {
   container.scrollTop = container.scrollHeight;
 }
 
-// Filter logs based on search query (Trade Copy History)
+// Helper: Check if log matches search query
+function matchesSearchQuery(log, query) {
+  const timestamp = new Date(log.timestamp).toLocaleString().toLowerCase();
+  const eaId = (log.eaId || log.controllerEAId || log.propEAId || '').toLowerCase();
+  const accountNumber = (log.accountNumber || log.controllerAccount || log.propAccount || '').toLowerCase();
+  const ctrlTicket = (log.controllerTicket || '').toString();
+  const propTicket = (log.propTicket || '').toString();
+  const type = (log.type || '').toLowerCase();
+  const eaType = (log.eaType || '').toLowerCase();
+  const action = (log.action || '').toLowerCase();
+  const warning = (log.warningMessage || '').toLowerCase();
+  
+  return timestamp.includes(query) || 
+         eaId.includes(query) || 
+         accountNumber.includes(query) ||
+         ctrlTicket.includes(query) || 
+         propTicket.includes(query) || 
+         type.includes(query) || 
+         eaType.includes(query) ||
+         action.includes(query) ||
+         warning.includes(query);
+}
+
+// Filter logs based on search query (Activity Logs)
 function filterHistoryLogs() {
   const searchBox = document.getElementById('historySearchBox');
   if(!searchBox) return;
@@ -2694,30 +2781,13 @@ function filterHistoryLogs() {
   const query = searchBox.value.trim().toLowerCase();
   
   if(query === '') {
-    // No filter, show all
-    filteredHistoryLogs = [...allHistoryLogs];
+    // No filter, show all logs after clear timestamp
+    filteredHistoryLogs = allHistoryLogs.filter(log => new Date(log.timestamp).getTime() > userClearTimestamp);
   } else {
-    // Filter by query (search in timestamp, Controller ID, Prop ID, ticket, symbol, type, status)
+    // Filter by query (search in all text fields)
     filteredHistoryLogs = allHistoryLogs.filter(log => {
-      const timestamp = new Date(log.timestamp).toLocaleString().toLowerCase();
-      const controllerEA = (log.controllerEAId || '').toLowerCase();
-      const propEA = (log.propEAId || '').toLowerCase();
-      const ctrlTicket = (log.controllerTicket || '').toString();
-      const propTicket = (log.propTicket || '').toString();
-      const symbol = (log.symbol || '').toLowerCase();
-      const type = (log.type || '').toLowerCase();
-      const status = (log.status || '').toLowerCase();
-      const error = (log.error || '').toLowerCase();
-      
-      return timestamp.includes(query) || 
-             controllerEA.includes(query) || 
-             propEA.includes(query) || 
-             ctrlTicket.includes(query) || 
-             propTicket.includes(query) || 
-             symbol.includes(query) || 
-             type.includes(query) || 
-             status.includes(query) || 
-             error.includes(query);
+      if(new Date(log.timestamp).getTime() <= userClearTimestamp) return false;
+      return matchesSearchQuery(log, query);
     });
   }
   
@@ -2726,13 +2796,41 @@ function filterHistoryLogs() {
 
 // Clear logs from UI (user clears, but stays in DB)
 async function clearHistoryLogs() {
-  if(!confirm('Clear all logs from display? (Logs will remain in database)')) return;
+  const confirmed = await showConfirm(
+    '🗑️ Clear Activity Logs?',
+    'Are you sure you want to clear all activity logs?'
+  );
   
-  // Just clear the UI, don't delete from DB
-  allHistoryLogs = [];
-  filteredHistoryLogs = [];
-  renderHistoryLogs();
-  showNotification('✅ Logs cleared from display', 'success');
+  if(!confirmed) return;
+  
+  try {
+    // Use the userId defined at the top of this section
+    const res = await fetch('/api/activity-logs/clear', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ userId })
+    });
+    
+    if(!res.ok) throw new Error('Failed to clear logs');
+    
+    const data = await res.json();
+    if(!data.ok) throw new Error(data.error || 'Unknown error');
+    
+    // Update clear timestamp - future logs after this will show
+    userClearTimestamp = data.clearTimestamp || Date.now();
+    
+    // Save clear timestamp to localStorage (per user)
+    localStorage.setItem(clearTimestampKey, userClearTimestamp.toString());
+    
+    // Filter out old logs
+    filteredHistoryLogs = allHistoryLogs.filter(log => new Date(log.timestamp).getTime() > userClearTimestamp);
+    
+    renderHistoryLogs();
+    showNotification('✅ Logs cleared from display', 'success');
+  } catch(err) {
+    console.error('[HISTORY] Failed to clear logs:', err);
+    showNotification('❌ Failed to clear logs', 'error');
+  }
 }
 
 // Helper: Escape HTML to prevent XSS
@@ -2741,15 +2839,6 @@ function escapeHtml(text) {
   div.textContent = text;
   return div.innerHTML;
 }
-
-// Load logs when History tab is opened
-const originalShowTab = showTab;
-showTab = function(tab) {
-  originalShowTab(tab);
-  if(tab === 'history') {
-    loadHistoryLogs();
-  }
-};
 
 </script>
 
