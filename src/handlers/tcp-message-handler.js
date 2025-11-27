@@ -565,6 +565,137 @@ function handleTradeActionMessage(msg, sock, controllers, broadcast) {
   }
 }
 
+/**
+ * Handle bulk trade actions from Controller EA (multiple actions in ONE message)
+ * More efficient than individual actions - prevents TCP flooding
+ */
+function handleBulkTradeActionsMessage(msg, sock, controllers, broadcast) {
+  const { id, userId, actions } = msg;
+  
+  if(!actions || !Array.isArray(actions) || actions.length === 0) {
+    console.log(`[BULK-ACTIONS] ❌ Invalid bulk message from ${id}: no actions array`);
+    return;
+  }
+  
+  console.log(`[BULK-ACTIONS] 📦 Received ${actions.length} action(s) from ${id}`);
+  
+  // Find Controller EA
+  const found = EAManager.findEABySocket(controllers, sock);
+  if(!found) {
+    console.log(`[BULK-ACTIONS] ❌ Controller EA not found for socket`);
+    return;
+  }
+  
+  const ctrl = found.ea;
+  
+  // Send ACK for ALL unique tickets in bulk
+  const tickets = new Set();
+  
+  actions.forEach(action => {
+    const ticket = action.ticket;
+    if(ticket && !tickets.has(ticket)) {
+      tickets.add(ticket);
+      
+      const ackMsg = {
+        type: 'trade_action_ack',
+        controllerTicket: ticket,
+        action: action.action,
+        timestamp: Date.now()
+      };
+      
+      const ackJSON = JSON.stringify(ackMsg);
+      const ackBuffer = Buffer.from(ackJSON, 'utf8');
+      const ackFrame = Buffer.allocUnsafe(4 + ackBuffer.length);
+      ackFrame.writeUInt32BE(ackBuffer.length, 0);
+      ackBuffer.copy(ackFrame, 4);
+      
+      sock.write(ackFrame);
+    }
+  });
+  
+  console.log(`[BULK-ACK] ✅ Sent ${tickets.size} ACK(s) to ${id}`);
+  
+  // Log all actions to MongoDB (bulk insert for performance)
+  const logEntries = actions.map(action => ({
+    userId: userId,
+    controllerEAId: id,
+    controllerTicket: action.ticket,
+    action: action.action,
+    sl: action.sl || 0,
+    tp: action.tp || 0,
+    volume: action.volume || 0,
+    openPrice: action.openPrice || 0,
+    serverReceivedAt: new Date(),
+    success: null
+  }));
+  
+  TradeActionLog.insertMany(logEntries).then(() => {
+    console.log(`[DB] 💾 Bulk logged ${logEntries.length} trade action(s)`);
+  }).catch(err => {
+    console.error(`[DB] ❌ Failed to bulk log trade actions:`, err.message);
+  });
+  
+  // Get all Prop EAs for this user
+  const propEAs = EAManager.getEAsByUser(controllers, userId).filter(ea => ea.role === 'prop');
+  
+  if(propEAs.length === 0) {
+    console.log(`[BULK-ACTIONS] ⚠️ No Prop EAs for user ${userId}`);
+    return;
+  }
+  
+  console.log(`[BULK-ACTIONS] ➡️ Forwarding ${actions.length} action(s) to ${propEAs.length} Prop EA(s)`);
+  
+  // Process each action and build trade requests
+  actions.forEach(action => {
+    const actionType = action.action;
+    const controllerTicket = action.ticket;
+    
+    // Build appropriate trade request based on action type
+    let request = null;
+    
+    if(actionType === 'close_position') {
+      request = TradeRequestManager.buildExitPositionRequest(controllerTicket, action.volume || 0);
+    }
+    else if(actionType === 'modify_position') {
+      request = TradeRequestManager.buildModifyPositionRequest(controllerTicket, action.sl || 0, action.tp || 0);
+    }
+    else if(actionType === 'remove_order') {
+      request = TradeRequestManager.buildExitOrderRequest(controllerTicket);
+    }
+    else if(actionType === 'modify_order') {
+      request = TradeRequestManager.buildModifyOrderRequest(controllerTicket, action.openPrice, action.volume, action.sl || 0, action.tp || 0);
+    }
+    
+    // Send to all Prop EAs
+    if(request) {
+      propEAs.forEach(prop => {
+        TradeRequestManager.sendTradeRequest(prop, request, (success, response) => {
+          if(success) {
+            console.log(`[BULK-ACTIONS] ✅ ${actionType} completed on ${prop.id} - Ticket: ${controllerTicket}`);
+          } else {
+            console.log(`[BULK-ACTIONS] ❌ ${actionType} failed on ${prop.id}: ${response?.error || 'Unknown'}`);
+          }
+          
+          // Update MongoDB log
+          TradeActionLog.findOneAndUpdate(
+            { controllerTicket: controllerTicket, action: actionType },
+            { 
+              propEAId: prop.id,
+              propTicket: response?.ticket || '',
+              success: success,
+              error: success ? '' : (response?.error || 'Unknown error'),
+              propExecutedAt: new Date()
+            },
+            { sort: { timestamp: -1 } }
+          ).catch(err => {
+            console.error(`[DB] ❌ Failed to update trade action log:`, err.message);
+          });
+        });
+      });
+    }
+  });
+}
+
 module.exports = {
   handleHelloMessage,
   handleStatusMessage,
@@ -576,6 +707,7 @@ module.exports = {
   handleTradesHistoryMessage,
   handleTradeResponseMessage,
   handleBrokerTimeMessage,
-  handleTradeActionMessage
+  handleTradeActionMessage,
+  handleBulkTradeActionsMessage
 };
 
