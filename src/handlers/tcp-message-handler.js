@@ -577,7 +577,18 @@ function handleBulkTradeActionsMessage(msg, sock, controllers, broadcast) {
     return;
   }
   
-  console.log(`[BULK-ACTIONS] 📦 Received ${actions.length} action(s) from ${id}`);
+  console.log(`[BULK-ACTIONS] 📦 Received BULK from ${id} with ${actions.length} action(s)`);
+  
+  // Print summary of actions by type
+  const actionSummary = {};
+  actions.forEach(action => {
+    actionSummary[action.action] = (actionSummary[action.action] || 0) + 1;
+  });
+  console.log(`[BULK-ACTIONS] 📊 Summary:`, JSON.stringify(actionSummary));
+  
+  // Print first 3 tickets as sample
+  const sampleTickets = actions.slice(0, 3).map(a => a.ticket).join(', ');
+  console.log(`[BULK-ACTIONS] 🎫 Sample tickets: ${sampleTickets}${actions.length > 3 ? ', ...' : ''}`);
   
   // Find Controller EA
   const found = EAManager.findEABySocket(controllers, sock);
@@ -644,11 +655,16 @@ function handleBulkTradeActionsMessage(msg, sock, controllers, broadcast) {
   }
   
   console.log(`[BULK-ACTIONS] ➡️ Forwarding ${actions.length} action(s) to ${propEAs.length} Prop EA(s)`);
+  console.log(`[BULK-ACTIONS] 🔄 Starting action processing loop...`);
   
   // Process each action and build trade requests
+  let actionIndex = 0;
   actions.forEach(action => {
+    actionIndex++;
     const actionType = action.action;
     const controllerTicket = action.ticket;
+    
+    console.log(`[BULK-ACTIONS] [${actionIndex}/${actions.length}] Processing ${actionType} for ticket #${controllerTicket}`);
     
     // Build appropriate trade request based on action type
     let request = null;
