@@ -12,6 +12,62 @@ function setBroadcastFunction(fn) {
   broadcastFn = fn;
 }
 
+/**
+ * Check if order/position is within acceptable delay (maxTime)
+ * @param {string} timeOpen - Time string from EA (format: "YYYY.MM.DD HH:MM:SS")
+ * @param {number} timezoneOffset - Timezone offset in hours (e.g., +2, -5)
+ * @param {number} maxTimeSeconds - Maximum acceptable delay in seconds
+ * @returns {Object} { isValid: boolean, ageSeconds: number }
+ */
+function checkOrderDelay(timeOpen, timezoneOffset, maxTimeSeconds) {
+  try {
+    // Parse time string: "YYYY.MM.DD HH:MM:SS" (MQL5 TimeToString format)
+    const parts = timeOpen.replace(/\./g, '-').split(' ');
+    if (parts.length !== 2) {
+      console.error(`[DELAY-CHECK] Invalid time format: ${timeOpen}`);
+      return { isValid: false, ageSeconds: Infinity };
+    }
+    
+    const dateParts = parts[0].split('-'); // [YYYY, MM, DD]
+    const timeParts = parts[1].split(':'); // [HH, MM, SS]
+    
+    if (dateParts.length !== 3 || timeParts.length !== 3) {
+      console.error(`[DELAY-CHECK] Invalid time format: ${timeOpen}`);
+      return { isValid: false, ageSeconds: Infinity };
+    }
+    
+    const year = parseInt(dateParts[0], 10);
+    const month = parseInt(dateParts[1], 10);
+    const day = parseInt(dateParts[2], 10);
+    const hour = parseInt(timeParts[0], 10);
+    const minute = parseInt(timeParts[1], 10);
+    const second = parseInt(timeParts[2], 10);
+    
+    // Create UTC timestamp from broker time
+    // Broker time is in local timezone, so we need to subtract the offset to get UTC
+    const brokerTimeUTC = Date.UTC(year, month - 1, day, hour, minute, second);
+    const offsetMs = timezoneOffset * 60 * 60 * 1000;
+    const orderTimeUTC = brokerTimeUTC - offsetMs;
+    
+    // Calculate age in seconds
+    const nowUTC = Date.now();
+    const ageMs = nowUTC - orderTimeUTC;
+    const ageSeconds = ageMs / 1000;
+    
+    const isValid = ageSeconds <= maxTimeSeconds;
+    
+    // Debug log (first time only per order)
+    if (ageSeconds < 0 || ageSeconds > 3600) {
+      console.log(`[DELAY-CHECK] DEBUG: timeOpen="${timeOpen}", parsed=${year}-${month}-${day} ${hour}:${minute}:${second}, brokerUTC=${new Date(brokerTimeUTC).toISOString()}, orderUTC=${new Date(orderTimeUTC).toISOString()}, age=${Math.round(ageSeconds)}s`);
+    }
+    
+    return { isValid, ageSeconds: Math.round(ageSeconds) };
+  } catch (err) {
+    console.error(`[DELAY-CHECK] Error parsing time: ${err.message}`);
+    return { isValid: false, ageSeconds: Infinity };
+  }
+}
+
 // Throttled skip logging (once per 15s per trade→prop)
 const lastSkipLogAt = new Map(); // key: `${userId}|${controllerEAId}:${controllerTicket}|${propEAId}` -> timestamp
 const SKIP_LOG_INTERVAL_MS = 15000;
@@ -260,9 +316,33 @@ function copyPositionToPropEAs(controllerEA, position, propEAs) {
       continue;
     }
 
+    // 2.5. Check Maximum Order Delay (if configured)
+    const maxTimeSeconds = propEA.settings?.maxTime || 15; // Default 15 seconds
+    const timezoneOffset = controllerEA.timezoneOffset || 0;
+    
+    const delayCheck = checkOrderDelay(position.timeOpen, timezoneOffset, maxTimeSeconds);
+    
+    if (!delayCheck.isValid) {
+      console.log(`[DELAY-CHECK] ⏱️ Position ${controllerEAId}:${controllerTicket} too old (${delayCheck.ageSeconds}s > ${maxTimeSeconds}s) - skipping ${propEAId}`);
+      continue;
+    }
+
+    // 2.6. Special Case: Risk/Reward requires TP (TakeProfit)
+    const calcMethod = propEA.settings?.calcMethod || 'none';
+    const hasTP = position.takeProfit && position.takeProfit > 0;
+    
+    if (calcMethod === 'rr' && !hasTP) {
+      console.log(`[RR-CHECK] ⚠️ Position ${controllerEAId}:${controllerTicket} missing TP (age: ${delayCheck.ageSeconds}s/${maxTimeSeconds}s) - waiting for modification on ${propEAId}`);
+      continue; // Wait for user to modify and add TP within maxTime
+    }
+
     // 3. Settings Manipulation
-    // Combine Controller settings + Prop settings to modify the order
-    const modifiedPosition = applySettingsToPosition(position, controllerEA.settings, propEA.settings);
+    // Get balances for risk calculation
+    const controllerBalance = controllerEA.accountInfo?.balance || 0;
+    const propBalance = propEA.accountInfo?.balance || 0;
+    
+    // Combine Controller settings + Prop settings to modify the trade
+    const modifiedPosition = applySettingsToPosition(position, controllerEA.settings, propEA.settings, controllerBalance, propBalance);
 
     // Use modified values for the request
     const reqCmd = modifiedPosition.type;
@@ -286,8 +366,8 @@ function copyPositionToPropEAs(controllerEA, position, propEAs) {
     const jitterLog = randomJitter > 0 ? ` [Jitter: ${randomJitter.toFixed(2)}s]` : '';
     console.log(`[COPY] 🆕 Pos ${controllerEAId}:${controllerTicket} (${position.symbol} ${reqCmd} ${reqVolume}) → ${propEAId}${jitterLog}`);
 
-    // Build request with jitter (jitter will be applied by EA before execution)
-    const request = TradeRequestManager.buildOpenPositionRequest(reqCmd, reqVolume, reqSl, reqTp, comment, position.ticket, position.symbol, randomJitter);
+    // Build request with jitter and Prop EA settings (jitter will be applied by EA before execution)
+    const request = TradeRequestManager.buildOpenPositionRequest(reqCmd, reqVolume, reqSl, reqTp, comment, position.ticket, position.symbol, randomJitter, propEA.settings);
     const requestId = request.requestId;
 
     // Mark as PENDING immediately
@@ -362,9 +442,33 @@ function copyOrderToPropEAs(controllerEA, order, propEAs) {
       continue;
     }
 
+    // 2.5. Check Maximum Order Delay (if configured)
+    const maxTimeSeconds = propEA.settings?.maxTime || 15; // Default 15 seconds
+    const timezoneOffset = controllerEA.timezoneOffset || 0;
+    
+    const delayCheck = checkOrderDelay(order.timeOpen, timezoneOffset, maxTimeSeconds);
+    
+    if (!delayCheck.isValid) {
+      console.log(`[DELAY-CHECK] ⏱️ Order ${controllerEAId}:${controllerTicket} too old (${delayCheck.ageSeconds}s > ${maxTimeSeconds}s) - skipping ${propEAId}`);
+      continue;
+    }
+
+    // 2.6. Special Case: Risk/Reward requires TP (TakeProfit)
+    const calcMethod = propEA.settings?.calcMethod || 'none';
+    const hasTP = order.takeProfit && order.takeProfit > 0;
+    
+    if (calcMethod === 'rr' && !hasTP) {
+      console.log(`[RR-CHECK] ⚠️ Order ${controllerEAId}:${controllerTicket} missing TP (age: ${delayCheck.ageSeconds}s/${maxTimeSeconds}s) - waiting for modification on ${propEAId}`);
+      continue; // Wait for user to modify and add TP within maxTime
+    }
+
     // 3. Settings Manipulation
-    // Combine Controller settings + Prop settings to modify the order
-    const modifiedOrder = applySettingsToOrder(order, controllerEA.settings, propEA.settings);
+    // Get balances for risk calculation
+    const controllerBalance = controllerEA.accountInfo?.balance || 0;
+    const propBalance = propEA.accountInfo?.balance || 0;
+    
+    // Combine Controller settings + Prop settings to modify the trade
+    const modifiedOrder = applySettingsToOrder(order, controllerEA.settings, propEA.settings, controllerBalance, propBalance);
 
     // Use modified values for the request
     const reqCmd = modifiedOrder.type;
@@ -389,8 +493,8 @@ function copyOrderToPropEAs(controllerEA, order, propEAs) {
     const jitterLog = randomJitter > 0 ? ` [Jitter: ${randomJitter.toFixed(2)}s]` : '';
     console.log(`[COPY] 🆕 Ord ${controllerEAId}:${controllerTicket} (${order.symbol} ${reqCmd} ${reqVolume}) → ${propEAId}${jitterLog}`);
 
-    // Build request with jitter (jitter will be applied by EA before execution)
-    const request = TradeRequestManager.buildOpenOrderRequest(reqCmd, reqVolume, reqOpenPrice, reqSl, reqTp, comment, order.ticket, order.symbol, randomJitter);
+    // Build request with jitter and Prop EA settings (jitter will be applied by EA before execution)
+    const request = TradeRequestManager.buildOpenOrderRequest(reqCmd, reqVolume, reqOpenPrice, reqSl, reqTp, comment, order.ticket, order.symbol, randomJitter, propEA.settings);
     const requestId = request.requestId;
 
     // Mark as PENDING immediately
@@ -602,17 +706,34 @@ module.exports = {
  * Apply settings to modify a Position
  * Combines Controller settings and Prop settings
  */
-function applySettingsToPosition(position, controllerSettings, propSettings) {
+function applySettingsToPosition(position, controllerSettings, propSettings, controllerBalance, propBalance) {
   // Clone the position to avoid modifying original
   const modified = { ...position };
 
-  // TODO: Implement specific settings logic here
-  // For now, return as-is (Placeholder)
-
-  // Example structure for future implementation:
-  // if (propSettings?.riskMethod === 'fixed_lot') {
-  //   modified.volume = propSettings.riskValue;
-  // }
+  // ===== PROP SETTINGS: VOLUME/RISK CALCULATION =====
+  const calcMethod = propSettings?.calcMethod || 'none';
+  
+  if (calcMethod === 'simple' && controllerBalance > 0 && propBalance > 0) {
+    // Simple Risk Calculation
+    const percentage = propSettings?.value || 0;
+    
+    if (percentage > 0) {
+      // A = Prop Balance / Controller Balance
+      const A = propBalance / controllerBalance;
+      
+      // L1 = Original Lot * A
+      const L1 = position.volume * A;
+      
+      // L2 = L1 / 100 * Percentage
+      const L2 = (L1 / 100) * percentage;
+      
+      // Send raw calculated volume (Prop EA will validate and adjust)
+      modified.volume = L2;
+      
+      console.log(`[SIMPLE-RISK] Volume calculated: ${position.volume.toFixed(2)} → ${modified.volume.toFixed(4)} (A=${A.toFixed(2)}, L1=${L1.toFixed(2)}, ${percentage}%)`);
+    }
+  }
+  // Risk/Reward calculation will be done by Prop EA
 
   return modified;
 }
@@ -621,7 +742,7 @@ function applySettingsToPosition(position, controllerSettings, propSettings) {
  * Apply settings to modify an Order
  * Combines Controller settings and Prop settings
  */
-function applySettingsToOrder(order, controllerSettings, propSettings) {
+function applySettingsToOrder(order, controllerSettings, propSettings, controllerBalance, propBalance) {
   // Clone the order to avoid modifying original
   const modified = { ...order };
 
@@ -663,7 +784,29 @@ function applySettingsToOrder(order, controllerSettings, propSettings) {
   }
 
   // ===== PROP SETTINGS: VOLUME/RISK CALCULATION =====
-  // TODO: Implement Prop EA risk/volume calculation here
+  const calcMethod = propSettings?.calcMethod || 'none';
+  
+  if (calcMethod === 'simple' && controllerBalance > 0 && propBalance > 0) {
+    // Simple Risk Calculation
+    const percentage = propSettings?.value || 0;
+    
+    if (percentage > 0) {
+      // A = Prop Balance / Controller Balance
+      const A = propBalance / controllerBalance;
+      
+      // L1 = Original Lot * A
+      const L1 = order.volume * A;
+      
+      // L2 = L1 / 100 * Percentage
+      const L2 = (L1 / 100) * percentage;
+      
+      // Send raw calculated volume (Prop EA will validate and adjust)
+      modified.volume = L2;
+      
+      console.log(`[SIMPLE-RISK] Volume calculated: ${order.volume.toFixed(2)} → ${modified.volume.toFixed(4)} (A=${A.toFixed(2)}, L1=${L1.toFixed(2)}, ${percentage}%)`);
+    }
+  }
+  // Risk/Reward calculation will be done by Prop EA
 
   return modified;
 }

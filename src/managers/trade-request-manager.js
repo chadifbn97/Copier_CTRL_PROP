@@ -37,8 +37,24 @@ function generateRequestId() {
  * @param {number} jitterSeconds - Jitter delay in seconds (applied by EA before execution)
  * @returns {object} Request object
  */
-function buildOpenPositionRequest(cmd, volume, sl, tp, comment, controllerTicket, symbol, jitterSeconds = 0) {
+function buildOpenPositionRequest(cmd, volume, sl, tp, comment, controllerTicket, symbol, jitterSeconds = 0, propSettings = null) {
   const requestId = generateRequestId();
+  
+  const data = {
+    symbol: symbol,     // string
+    cmd: cmd,           // "Buy" or "Sell"
+    volume: volume,     // double
+    sl: sl,             // double (0 = no SL)
+    tp: tp,             // double (0 = no TP)
+    comment: comment    // string (contains Controller ticket)
+  };
+  
+  // Add Prop EA settings for Risk/Reward calculation
+  if (propSettings) {
+    data.calcMethod = propSettings.calcMethod || 'none';
+    data.method = propSettings.method || 'amount';
+    data.value = propSettings.value || 0;
+  }
   
   return {
     type: 'trade_request',
@@ -46,14 +62,7 @@ function buildOpenPositionRequest(cmd, volume, sl, tp, comment, controllerTicket
     requestId: requestId,
     controllerTicket: controllerTicket,  // Track original ticket
     jitterSeconds: jitterSeconds,        // Jitter delay (applied by EA)
-    data: {
-      symbol: symbol,     // string
-      cmd: cmd,           // "Buy" or "Sell"
-      volume: volume,     // double
-      sl: sl,             // double (0 = no SL)
-      tp: tp,             // double (0 = no TP)
-      comment: comment    // string (contains Controller ticket)
-    },
+    data: data,
     timestamp: Date.now()
   };
 }
@@ -71,8 +80,25 @@ function buildOpenPositionRequest(cmd, volume, sl, tp, comment, controllerTicket
  * @param {number} jitterSeconds - Jitter delay in seconds (applied by EA before execution)
  * @returns {object} Request object
  */
-function buildOpenOrderRequest(cmd, volume, openPrice, sl, tp, comment, controllerTicket, symbol, jitterSeconds = 0) {
+function buildOpenOrderRequest(cmd, volume, openPrice, sl, tp, comment, controllerTicket, symbol, jitterSeconds = 0, propSettings = null) {
   const requestId = generateRequestId();
+  
+  const data = {
+    symbol: symbol,       // string
+    cmd: cmd,             // "Buy_Limit", "Sell_Limit", "Buy_Stop", "Sell_Stop"
+    volume: volume,       // double
+    openPrice: openPrice, // double
+    sl: sl,               // double (0 = no SL)
+    tp: tp,               // double (0 = no TP)
+    comment: comment      // string (contains Controller ticket)
+  };
+  
+  // Add Prop EA settings for Risk/Reward calculation
+  if (propSettings) {
+    data.calcMethod = propSettings.calcMethod || 'none';
+    data.method = propSettings.method || 'amount';
+    data.value = propSettings.value || 0;
+  }
   
   return {
     type: 'trade_request',
@@ -80,15 +106,7 @@ function buildOpenOrderRequest(cmd, volume, openPrice, sl, tp, comment, controll
     requestId: requestId,
     controllerTicket: controllerTicket,  // Track original ticket
     jitterSeconds: jitterSeconds,        // Jitter delay (applied by EA)
-    data: {
-      symbol: symbol,       // string
-      cmd: cmd,             // "Buy_Limit", "Sell_Limit", "Buy_Stop", "Sell_Stop"
-      volume: volume,       // double
-      openPrice: openPrice, // double
-      sl: sl,               // double (0 = no SL)
-      tp: tp,               // double (0 = no TP)
-      comment: comment      // string (contains Controller ticket)
-    },
+    data: data,
     timestamp: Date.now()
   };
 }
