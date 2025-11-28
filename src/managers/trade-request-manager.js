@@ -34,9 +34,10 @@ function generateRequestId() {
  * @param {number} sl - Stop Loss price
  * @param {number} tp - Take Profit price
  * @param {string} comment - Comment (contains Controller EA ticket)
+ * @param {number} jitterSeconds - Jitter delay in seconds (applied by EA before execution)
  * @returns {object} Request object
  */
-function buildOpenPositionRequest(cmd, volume, sl, tp, comment, controllerTicket, symbol) {
+function buildOpenPositionRequest(cmd, volume, sl, tp, comment, controllerTicket, symbol, jitterSeconds = 0) {
   const requestId = generateRequestId();
   
   return {
@@ -44,6 +45,7 @@ function buildOpenPositionRequest(cmd, volume, sl, tp, comment, controllerTicket
     subtype: 'Request_Open.Pos',
     requestId: requestId,
     controllerTicket: controllerTicket,  // Track original ticket
+    jitterSeconds: jitterSeconds,        // Jitter delay (applied by EA)
     data: {
       symbol: symbol,     // string
       cmd: cmd,           // "Buy" or "Sell"
@@ -66,9 +68,10 @@ function buildOpenPositionRequest(cmd, volume, sl, tp, comment, controllerTicket
  * @param {number} sl - Stop Loss price
  * @param {number} tp - Take Profit price
  * @param {string} comment - Comment (contains Controller EA ticket)
+ * @param {number} jitterSeconds - Jitter delay in seconds (applied by EA before execution)
  * @returns {object} Request object
  */
-function buildOpenOrderRequest(cmd, volume, openPrice, sl, tp, comment, controllerTicket, symbol) {
+function buildOpenOrderRequest(cmd, volume, openPrice, sl, tp, comment, controllerTicket, symbol, jitterSeconds = 0) {
   const requestId = generateRequestId();
   
   return {
@@ -76,6 +79,7 @@ function buildOpenOrderRequest(cmd, volume, openPrice, sl, tp, comment, controll
     subtype: 'Request_Open.Ord',
     requestId: requestId,
     controllerTicket: controllerTicket,  // Track original ticket
+    jitterSeconds: jitterSeconds,        // Jitter delay (applied by EA)
     data: {
       symbol: symbol,       // string
       cmd: cmd,             // "Buy_Limit", "Sell_Limit", "Buy_Stop", "Sell_Stop"
@@ -197,9 +201,10 @@ function buildModifyOrderRequest(ticket, openPrice, volume, sl, tp) {
  * @param {object} propEA - Prop EA object from controllers Map
  * @param {object} request - Request object
  * @param {function} callback - Callback(success, response)
+ * @param {number} customTimeout - Custom timeout in ms (default: REQUEST_TIMEOUT)
  * @returns {boolean} True if sent successfully
  */
-function sendTradeRequest(propEA, request, callback) {
+function sendTradeRequest(propEA, request, callback, customTimeout = null) {
   if(!propEA || !propEA.socket) {
     console.error(`[REQUEST] ❌ ${request.requestId?.substring(0,8)} - Prop EA not connected`);
     if(callback) callback(false, {error: 'Prop EA not connected'});
@@ -207,6 +212,10 @@ function sendTradeRequest(propEA, request, callback) {
   }
   
   try {
+    // Calculate timeout: If jitterSeconds exists, use jitter + 5s buffer, otherwise use default
+    const jitterMs = (request.jitterSeconds || 0) * 1000;
+    const timeoutMs = customTimeout || (jitterMs > 0 ? jitterMs + 5000 : REQUEST_TIMEOUT);
+    
     // Add to pending requests
     pendingRequests.set(request.requestId, {
       request: request,
@@ -215,12 +224,12 @@ function sendTradeRequest(propEA, request, callback) {
       propEaId: propEA.id
     });
     
-    // Set timeout
+    // Set timeout (dynamic based on jitter)
     setTimeout(() => {
       if(pendingRequests.has(request.requestId)) {
         const pending = pendingRequests.get(request.requestId);
         pendingRequests.delete(request.requestId);
-        console.error(`[REQUEST] ⏱️ TIMEOUT ${request.requestId.substring(0,8)} (${request.subtype}) - No response after ${REQUEST_TIMEOUT/1000}s`);
+        console.error(`[REQUEST] ⏱️ TIMEOUT ${request.requestId.substring(0,8)} (${request.subtype}) - No response after ${(timeoutMs/1000).toFixed(1)}s`);
         if(pending.callback) {
           pending.callback(false, {
             error: 'Request timeout',
@@ -228,7 +237,7 @@ function sendTradeRequest(propEA, request, callback) {
           });
         }
       }
-    }, REQUEST_TIMEOUT);
+    }, timeoutMs);
     
     // Send request via TCP socket
     const requestJson = JSON.stringify(request);
@@ -238,8 +247,9 @@ function sendTradeRequest(propEA, request, callback) {
     Buffer.from(requestJson).copy(frame, 4);
     propEA.socket.write(frame);
     
-    // Compact logging
-    console.log(`[REQUEST] ⚡ ${request.requestId.substring(0,8)} ${request.subtype} → ${propEA.id} (pending: ${pendingRequests.size})`);
+    // Compact logging (show timeout if jitter applied)
+    const timeoutLog = jitterMs > 0 ? ` [timeout: ${(timeoutMs/1000).toFixed(1)}s]` : '';
+    console.log(`[REQUEST] ⚡ ${request.requestId.substring(0,8)} ${request.subtype} → ${propEA.id} (pending: ${pendingRequests.size})${timeoutLog}`);
     
     return true;
     

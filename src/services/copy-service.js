@@ -90,6 +90,12 @@ class CopyService {
         const positions = ctrl.tradesLive.positions || [];
         const orders = ctrl.tradesLive.orders || [];
         
+        // ✅ CHECK: Controller EA must be ENABLED
+        if(ctrl.enabled === false) {
+          if(shouldLog) console.log(`[COPY-SERVICE] 🛑 Controller ${ctrl.id} is DISABLED - skipping copy`);
+          continue;
+        }
+        
         if(shouldLog) {
           console.log(`[COPY-SERVICE] 🔄 Processing ${ctrl.id}: ${positions.length} positions, ${orders.length} orders → ${propEAs.length} Prop EA(s)`);
         }

@@ -192,6 +192,7 @@ function createEAData(userId, type, eaId, socket, additionalData = {}) {
     marginLevel: 0,
     accountNumber: '',
     accountName: '',
+    timezoneOffset: 0,           // UTC offset in hours (e.g., +2, -5)
     ts: 0,
     lastTick: null,
     blocked: false,

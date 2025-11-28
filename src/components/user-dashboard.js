@@ -1,5 +1,5 @@
 // User Dashboard Component (Live Panel)
-module.exports = function(accountData) {
+module.exports = function (accountData) {
   return `<!doctype html>
 <html data-theme="dark"><head><meta charset="utf-8"><title>Live Panel - HeptaPower</title>
 <link rel="stylesheet" href="/public/css/admin-dashboard.css">
@@ -524,37 +524,27 @@ module.exports = function(accountData) {
         <div class="form-group">
           <label>Jitter in Seconds</label>
           <div style="position:relative">
-            <input type="number" id="settingsJitter" step="0.01" min="0" placeholder="0.00" style="padding-right:40px" />
+            <input type="number" id="settingsJitter" step="0.5" min="0" max="60" placeholder="0.0" style="padding-right:40px" oninput="validateJitter()" onblur="correctJitter()" />
             <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-weight:700">sec</span>
           </div>
+          <div id="jitterError" class="input-error-tooltip" style="display:none;margin-top:6px;padding:8px 12px;background:rgba(239,68,68,0.1);border:1px solid var(--danger);border-radius:6px;color:var(--danger);font-size:12px;font-weight:600;animation:slideDown 0.2s ease">
+            ⚠️ Value must be between 0 and 60 seconds
+          </div>
+          <small style="display:block;margin-top:8px;color:var(--text-muted);font-size:12px">
+            Random delay (0.01 to specified value) applied before copying orders. Helps avoid simultaneous order execution across accounts.
+          </small>
         </div>
         <div class="form-group">
-          <label>Offset in Pips</label>
+          <label>Offset in Point <span style="font-size:11px;color:var(--text-muted)">(1 Point = 0.1 Pips)</span></label>
           <div style="position:relative">
-            <input type="number" id="settingsOffset" step="0.01" min="0" placeholder="0.00" style="padding-right:50px" oninput="updateOffsetDirectionFields()" />
-            <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-weight:700">pips</span>
+            <input type="number" id="settingsOffset" step="1" min="0" placeholder="0" style="padding-right:55px" oninput="updateOffsetDirectionFields()" />
+            <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-weight:700">point</span>
           </div>
         </div>
         
         <!-- Offset Direction Settings (shown only when Offset > 0) -->
         <div id="offsetDirectionsContainer" style="display:none;margin-top:16px;padding-top:16px;border-top:2px solid var(--border)">
-          <h4 style="margin:0 0 12px 0;font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase">Offset Directions</h4>
-          
-          <div class="form-group">
-            <label style="font-size:13px">Buy Position Offset Direction</label>
-            <select id="settingsBuyPosDir" class="offset-direction-select">
-              <option value="above">Above Open Price</option>
-              <option value="below">Below Open Price</option>
-            </select>
-          </div>
-          
-          <div class="form-group">
-            <label style="font-size:13px">Sell Position Offset Direction</label>
-            <select id="settingsSellPosDir" class="offset-direction-select">
-              <option value="above">Above Open Price</option>
-              <option value="below">Below Open Price</option>
-            </select>
-          </div>
+          <h4 style="margin:0 0 12px 0;font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase">Order Offset Directions</h4>
           
           <div class="form-group">
             <label style="font-size:13px">Buy Stop Order Offset Direction</label>
@@ -620,7 +610,7 @@ module.exports = function(accountData) {
           <div class="form-group" id="propValueGroup">
           <label>Value</label>
           <div style="position:relative">
-            <input type="number" id="settingsPropValue" step="0.01" min="0" placeholder="0.00" style="padding-right:40px" />
+            <input type="number" id="settingsPropValue" step="0.01" min="0.01" placeholder="0.00" style="padding-right:40px" />
             <span id="propValueIcon" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-weight:700">$</span>
           </div>
         </div>
@@ -637,8 +627,11 @@ module.exports = function(accountData) {
         <div class="form-group" style="margin-bottom:0">
           <label>Maximum Order Delay (seconds)</label>
           <div style="position:relative">
-            <input type="number" id="settingsPropMaxTime" step="0.01" min="0" placeholder="0.00" style="padding-right:40px" />
+            <input type="number" id="settingsPropMaxTime" step="0.5" min="15" placeholder="15.00" style="padding-right:40px" oninput="validatePropMaxTime()" onblur="correctPropMaxTime()" />
             <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-weight:700">sec</span>
+          </div>
+          <div id="propMaxTimeError" class="input-error-tooltip" style="display:none;margin-top:6px;padding:8px 12px;background:rgba(239,68,68,0.1);border:1px solid var(--danger);border-radius:6px;color:var(--danger);font-size:12px;font-weight:600;animation:slideDown 0.2s ease">
+            ⚠️ Minimum value is 15 seconds
           </div>
           <small style="display:block;margin-top:8px;color:var(--text-muted);font-size:12px">
             Maximum time difference between order open time and when web app processes it. Orders exceeding this delay won't be copied.
@@ -659,6 +652,26 @@ module.exports = function(accountData) {
     Created by <span class="footer-brand">HeptaPower</span> © <span id="currentYear"></span> - All Rights Reserved
   </div>
 </div>
+
+<style>
+/* Input error state */
+input.input-error {
+  border-color: var(--danger) !important;
+  color: var(--danger) !important;
+}
+
+/* Slide down animation for error tooltip */
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+</style>
 
 <script>
 document.getElementById('currentYear').textContent = new Date().getFullYear();
@@ -1389,6 +1402,7 @@ async function handleRemovalTimeout(id, type) {
 
 // Settings Modal Functions
 let currentSettingsType = null;
+let propMaxTimeLastValid = 15; // Track last valid value for auto-correction
 
 function openSettings(type) {
   const checkboxes = document.querySelectorAll('.ea-check-' + type + ':checked');
@@ -1428,9 +1442,7 @@ function openSettings(type) {
     document.getElementById('settingsJitter').value = showSettings?.jitter || '';
     document.getElementById('settingsOffset').value = showSettings?.offset || '';
     
-    // Offset direction dropdowns
-    document.getElementById('settingsBuyPosDir').value = showSettings?.buyPosDir || 'above';
-    document.getElementById('settingsSellPosDir').value = showSettings?.sellPosDir || 'below';
+    // Offset direction dropdowns (orders only)
     document.getElementById('settingsBuyStopDir').value = showSettings?.buyStopDir || 'above';
     document.getElementById('settingsSellStopDir').value = showSettings?.sellStopDir || 'below';
     document.getElementById('settingsBuyLimitDir').value = showSettings?.buyLimitDir || 'below';
@@ -1445,7 +1457,10 @@ function openSettings(type) {
     document.getElementById('settingsPropCalcMethod').value = calcMethod;
     document.getElementById('settingsPropMethod').value = showSettings?.method || 'amount';
     document.getElementById('settingsPropValue').value = showSettings?.value ?? '';
-    document.getElementById('settingsPropMaxTime').value = showSettings?.maxTime ?? '';
+    
+    const maxTimeValue = showSettings?.maxTime ?? 15;
+    document.getElementById('settingsPropMaxTime').value = maxTimeValue;
+    propMaxTimeLastValid = maxTimeValue; // Store as last valid value
     
     onPropCalcMethodChange(); // Show/hide sections based on calculation method
     updatePropValueIcon(); // Update icon based on method
@@ -1484,12 +1499,14 @@ function onPropCalcMethodChange() {
   const methodSelect = document.getElementById('settingsPropMethod');
   const valueInput = document.getElementById('settingsPropValue');
   const icon = document.getElementById('propValueIcon');
+  const warning = document.getElementById('riskWarningProp');
   
   if(!fieldsContainer) return;
   
   if(calcMethod === 'none') {
     // Hide only the fields container, not the entire section
     fieldsContainer.style.display = 'none';
+    if(warning) warning.style.display = 'none';
     return;
   }
   
@@ -1500,6 +1517,7 @@ function onPropCalcMethodChange() {
     // Simple risk: percentage only, hide RR method
     if(rrGroup) rrGroup.style.display = 'none';
     if(valueGroup) valueGroup.style.display = 'block';
+    if(warning) warning.style.display = 'none';
     
     // Force method to 'percentage' internally
     if(methodSelect) methodSelect.value = 'percentage';
@@ -1509,16 +1527,17 @@ function onPropCalcMethodChange() {
     
     if(valueInput) {
       valueInput.step = '0.01';
-      valueInput.min = '0';
+      valueInput.min = '0.01';
     }
   } else if(calcMethod === 'rr') {
     // Risk/Reward Ratio: show RR method + value
     if(rrGroup) rrGroup.style.display = 'block';
     if(valueGroup) valueGroup.style.display = 'block';
+    if(warning) warning.style.display = 'block';
     
     if(valueInput) {
       valueInput.step = '0.01';
-      valueInput.min = '0';
+      valueInput.min = '0.01';
     }
     
     // Let updatePropValueIcon decide if $ or %
@@ -1531,7 +1550,6 @@ function updateOffsetDirectionFields() {
   const isEnabled = !isNaN(offsetValue) && offsetValue > 0;
   
   const directionFields = [
-    'settingsBuyPosDir', 'settingsSellPosDir',
     'settingsBuyStopDir', 'settingsSellStopDir',
     'settingsBuyLimitDir', 'settingsSellLimitDir'
   ];
@@ -1549,6 +1567,109 @@ function updateOffsetDirectionFields() {
       document.getElementById(id).disabled = true;
     });
   }
+}
+
+function validatePropMaxTime() {
+  const input = document.getElementById('settingsPropMaxTime');
+  const errorTooltip = document.getElementById('propMaxTimeError');
+  
+  if(!input || !errorTooltip) return;
+  
+  const value = parseFloat(input.value);
+  
+  if(input.value === '') {
+    // Empty is allowed during typing
+    input.classList.remove('input-error');
+    errorTooltip.style.display = 'none';
+    return;
+  }
+  
+  if(isNaN(value) || value < 15) {
+    // Invalid: show error state
+    input.classList.add('input-error');
+    errorTooltip.style.display = 'block';
+  } else {
+    // Valid: clear error state and store as last valid
+    input.classList.remove('input-error');
+    errorTooltip.style.display = 'none';
+    propMaxTimeLastValid = value;
+  }
+}
+
+function correctPropMaxTime() {
+  const input = document.getElementById('settingsPropMaxTime');
+  const errorTooltip = document.getElementById('propMaxTimeError');
+  
+  if(!input) return;
+  
+  const value = parseFloat(input.value);
+  
+  if(input.value === '' || isNaN(value) || value < 15) {
+    // Auto-correct to 15 (default minimum)
+    input.value = 15;
+    propMaxTimeLastValid = 15;
+  }
+  
+  // Clear error state
+  input.classList.remove('input-error');
+  if(errorTooltip) errorTooltip.style.display = 'none';
+}
+
+// Track last valid Jitter value
+let jitterLastValid = 0;
+
+function validateJitter() {
+  const input = document.getElementById('settingsJitter');
+  const errorTooltip = document.getElementById('jitterError');
+  
+  if(!input || !errorTooltip) return;
+  
+  const value = parseFloat(input.value);
+  
+  if(input.value === '') {
+    // Empty is allowed during typing
+    input.classList.remove('input-error');
+    errorTooltip.style.display = 'none';
+    return;
+  }
+  
+  if(isNaN(value) || value < 0 || value > 60) {
+    // Invalid: show error state
+    input.classList.add('input-error');
+    errorTooltip.style.display = 'block';
+  } else {
+    // Valid: clear error state and store as last valid
+    input.classList.remove('input-error');
+    errorTooltip.style.display = 'none';
+    jitterLastValid = value;
+  }
+}
+
+function correctJitter() {
+  const input = document.getElementById('settingsJitter');
+  const errorTooltip = document.getElementById('jitterError');
+  
+  if(!input) return;
+  
+  const value = parseFloat(input.value);
+  
+  if(input.value === '' || isNaN(value)) {
+    // Auto-correct to 0 (no jitter)
+    input.value = 0;
+    jitterLastValid = 0;
+  } else if(value < 0) {
+    // Negative value - correct to 0
+    input.value = 0;
+    jitterLastValid = 0;
+  } else if(value > 60) {
+    // Too large - correct to 60
+    input.value = 60;
+    jitterLastValid = 60;
+  }
+  
+  // Clear error state
+  input.classList.remove('input-error');
+  if(errorTooltip) errorTooltip.style.display = 'none';
 }
 
 function closeSettings() {
@@ -1582,8 +1703,8 @@ async function saveSettings() {
     
     if(jitterInput !== '') {
       const jitter = parseFloat(jitterInput);
-      if(isNaN(jitter) || jitter < 0) {
-        showNotification('❌ Invalid Jitter value', 'error');
+      if(isNaN(jitter) || jitter < 0 || jitter > 60) {
+        showNotification('❌ Invalid Jitter value (must be between 0 and 60 seconds)', 'error');
         return;
       }
       settingsData.jitter = jitter;
@@ -1594,7 +1715,7 @@ async function saveSettings() {
     }
     
     if(offsetInput !== '') {
-      const offset = parseFloat(offsetInput);
+      const offset = parseInt(offsetInput, 10);
       if(isNaN(offset) || offset < 0) {
         showNotification('❌ Invalid Offset value', 'error');
         return;
@@ -1602,10 +1723,8 @@ async function saveSettings() {
       settingsData.offset = offset;
       hasAtLeastOne = true;
       
-      // Include offset direction settings if offset > 0
+      // Include offset direction settings if offset > 0 (orders only)
       if(offset > 0) {
-        settingsData.buyPosDir = document.getElementById('settingsBuyPosDir').value;
-        settingsData.sellPosDir = document.getElementById('settingsSellPosDir').value;
         settingsData.buyStopDir = document.getElementById('settingsBuyStopDir').value;
         settingsData.sellStopDir = document.getElementById('settingsSellStopDir').value;
         settingsData.buyLimitDir = document.getElementById('settingsBuyLimitDir').value;
@@ -1613,9 +1732,7 @@ async function saveSettings() {
       }
     } else if(isMultiEA) {
       settingsData.offset = 0; // Clear for multi-EA
-      // Also clear offset directions
-      settingsData.buyPosDir = 'above';
-      settingsData.sellPosDir = 'below';
+      // Also clear offset directions (orders only)
       settingsData.buyStopDir = 'above';
       settingsData.sellStopDir = 'below';
       settingsData.buyLimitDir = 'below';
@@ -1639,8 +1756,8 @@ async function saveSettings() {
       // Simple Risk: percentage value is required for single EA, optional (clear to 0) for multi-EA
     if(valueInput !== '') {
       const value = parseFloat(valueInput);
-      if(isNaN(value) || value < 0) {
-        showNotification('❌ Invalid Value', 'error');
+      if(isNaN(value) || value <= 0) {
+        showNotification('❌ Invalid Value (must be > 0)', 'error');
         return;
       }
         settingsData.method = 'percentage';
@@ -1655,8 +1772,8 @@ async function saveSettings() {
       // Risk/Reward Ratio: method + value
       if(valueInput !== '') {
         const value = parseFloat(valueInput);
-        if(isNaN(value) || value < 0) {
-          showNotification('❌ Invalid Value', 'error');
+        if(isNaN(value) || value <= 0) {
+          showNotification('❌ Invalid Value (must be > 0)', 'error');
           return;
         }
         settingsData.method = method;  // 'amount' or 'percentage'
@@ -1672,14 +1789,14 @@ async function saveSettings() {
     // Handle maxTime (independent of calcMethod)
     if(maxTimeInput !== '') {
       const maxTime = parseFloat(maxTimeInput);
-      if(isNaN(maxTime) || maxTime < 0) {
-        showNotification('❌ Invalid Maximum Delay', 'error');
+      if(isNaN(maxTime) || maxTime < 15) {
+        showNotification('❌ Invalid Maximum Delay (minimum 15 seconds)', 'error');
         return;
       }
       settingsData.maxTime = maxTime;
       hasAtLeastOne = true;
     } else if(isMultiEA) {
-      settingsData.maxTime = 0; // Clear for multi-EA
+      settingsData.maxTime = 15; // Default to 15 seconds for multi-EA
       hasAtLeastOne = true;
     }
   }
@@ -1865,17 +1982,22 @@ function updateBrokerTimeDisplay() {
   if(ctrlFilter) {
     const selectedEA = ctrlFilter.value;
     let brokerTime = '--/--/---- --:--';
+    let timezone = '';
     
     if(selectedEA !== 'all') {
       const ea = controllerEAs.get(selectedEA);
       if(ea && ea.brokerTime) {
         brokerTime = ea.brokerTime;
       }
+      if(ea && ea.timezoneOffset !== undefined) {
+        const offset = ea.timezoneOffset;
+        timezone = ' (UTC ' + (offset >= 0 ? '+' : '') + offset + ')';
+      }
     }
     
     const ctrlBrokerTimeEl = document.getElementById('ctrl-broker-time');
     if(ctrlBrokerTimeEl) {
-      ctrlBrokerTimeEl.textContent = brokerTime;
+      ctrlBrokerTimeEl.textContent = brokerTime + timezone;
     }
   }
   
@@ -1883,17 +2005,22 @@ function updateBrokerTimeDisplay() {
   if(propFilter) {
     const selectedEA = propFilter.value;
     let brokerTime = '--/--/---- --:--';
+    let timezone = '';
     
     if(selectedEA !== 'all') {
       const ea = propEAs.get(selectedEA);
       if(ea && ea.brokerTime) {
         brokerTime = ea.brokerTime;
       }
+      if(ea && ea.timezoneOffset !== undefined) {
+        const offset = ea.timezoneOffset;
+        timezone = ' (UTC ' + (offset >= 0 ? '+' : '') + offset + ')';
+      }
     }
     
     const propBrokerTimeEl = document.getElementById('prop-broker-time');
     if(propBrokerTimeEl) {
-      propBrokerTimeEl.textContent = brokerTime;
+      propBrokerTimeEl.textContent = brokerTime + timezone;
     }
   }
 }

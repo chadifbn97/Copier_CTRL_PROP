@@ -142,6 +142,12 @@ async function handleHelloMessage(msg, sock, controllers, adminAccounts, isMongo
         cur.accountNumber = accountNumber || '';
         cur.connected = true;
         
+        // Store TimeZone Offset (for jitter calculations)
+        if(msg.timezoneOffset !== undefined) {
+          cur.timezoneOffset = msg.timezoneOffset;
+          console.log(`[TIMEZONE] ${id} timezone: UTC ${msg.timezoneOffset >= 0 ? '+' : ''}${msg.timezoneOffset}`);
+        }
+        
         // Load saved settings from database
         const savedSettings = await loadEASettings(userId, id);
         if(savedSettings) {
